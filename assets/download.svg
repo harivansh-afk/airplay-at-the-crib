@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="310" height="60" viewBox="0 0 310 60" role="img" aria-label="Download for Mac">
+<rect width="310" height="60" rx="14" fill="#6d28d9"/>
+<path d="M30 17v18m-7-7 7 7 7-7m-15 11v5h16v-5" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="54" y="28" font-family="system-ui, sans-serif" font-size="17" font-weight="700" fill="white">Download for Mac</text>
+<text x="54" y="46" font-family="system-ui, sans-serif" font-size="12" fill="#ede9fe">Ready to open · Apple silicon + Intel</text>
+</svg>
