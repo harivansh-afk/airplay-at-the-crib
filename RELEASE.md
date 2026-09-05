@@ -2,7 +2,9 @@ AirplayAtTheCrib for Mac — no building or Terminal needed.
 
 Download **AirplayAtTheCrib.zip**, unzip it, and drag **AirplayAtTheCrib.app** into Applications.
 
-On first launch, macOS may block the app because this release is not notarized. Open **System Settings → Privacy & Security → Open Anyway**, then confirm **Open**. Allow **Local Network** access if asked.
+Version 0.2.1 is signed with Developer ID and notarized by Apple. Gatekeeper verification passed with “accepted — Notarized Developer ID,” and the notarization ticket is attached to the app. No “Open Anyway” workaround is needed. Allow **Local Network** access if asked.
+
+If you downloaded 0.1.0 or 0.2.0 and saw an Apple verification warning, replace that copy with this download.
 
 Open the app. TVs appear automatically. Choose your Roku and click **Use this TV**, then open **Control Center → Screen Mirroring** and select the TV. Keep the app running while casting. Next time, the app remembers your TV and reconnects discovery automatically.
 

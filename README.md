@@ -4,18 +4,18 @@ Your Roku is on the Wi-Fi. Your Mac just needs an introduction.
 
 **A small Mac app that helps your Roku show up in Screen Mirroring.** No Terminal. No building anything. No router settings.
 
-[![Download AirplayAtTheCrib for Mac](assets/download.svg)](https://git.harivan.sh/harivansh-afk/airplay-at-the-crib/releases/download/v0.2.0/AirplayAtTheCrib.zip)
+[![Download AirplayAtTheCrib for Mac](assets/download.svg)](https://git.harivan.sh/harivansh-afk/airplay-at-the-crib/releases/download/v0.2.1/AirplayAtTheCrib.zip)
 
-**[Download for Mac →](https://git.harivan.sh/harivansh-afk/airplay-at-the-crib/releases/download/v0.2.0/AirplayAtTheCrib.zip)** · macOS 13 or later · Apple silicon and Intel
+**[Download for Mac →](https://git.harivan.sh/harivansh-afk/airplay-at-the-crib/releases/download/v0.2.1/AirplayAtTheCrib.zip)** · macOS 13 or later · Apple silicon and Intel
 
 ## Open it the first time
 
 1. Download the ZIP above. Double-click it to unpack **AirplayAtTheCrib.app**.
 2. Drag the app into **Applications**, then double-click it.
-3. If your Mac blocks it, click **Done** or **OK**. Open **System Settings → Privacy & Security**, scroll to the security message about **AirplayAtTheCrib**, and click **Open Anyway**. Confirm **Open**. Your Mac may ask for your password or Touch ID.
+3. If your Mac asks whether to open an app downloaded from the internet, click **Open**.
 4. If asked to find devices on your local network, choose **Allow**.
 
-This first release is not notarized by Apple, so the one-time warning is expected. Only approve the copy you downloaded from this repository. You do **not** need to disable Gatekeeper, your firewall, or any other protection. [Apple’s instructions for opening an app](https://support.apple.com/en-us/102445).
+**Version 0.2.1 is signed with Developer ID and notarized by Apple.** No “Open Anyway” workaround is required. If you downloaded an older version and see “Apple could not verify,” move that old copy to the Trash and download the current ZIP above. You do **not** need to disable Gatekeeper, your firewall, or any other protection.
 
 ## Put your Mac on the TV
 
@@ -51,6 +51,8 @@ Each friend runs their own copy on their Mac. **This is not an iPhone, iPad, Win
 Everyone else: use the download button. The ZIP already contains the executable `.app`; there is nothing to build or install with a package manager.
 
 The app is native Swift/AppKit and uses macOS’s included `curl`, `dig`, and `dns-sd`. Source is in `Sources/main.swift`. With Apple’s command-line developer tools installed, run `bash build.sh` to produce a universal Mac app and `build/AirplayAtTheCrib.zip`.
+
+Local builds are ad-hoc signed by default. For distribution, set `SIGNING_IDENTITY` to your Developer ID Application identity before running the build. Create an `.xcarchive` containing the app at `Products/Applications/AirplayAtTheCrib.app` and generate its metadata with `swift Packaging/archive.swift <archive-path>`. Submit with `xcodebuild -exportArchive -archivePath <archive-path> -exportOptionsPlist Packaging/ExportOptions.plist -allowProvisioningUpdates`. This uses the account signed into Xcode. After Apple finishes processing, use `xcodebuild -exportNotarizedApp -archivePath <archive-path> -exportPath <output-directory>`. Validate the exported app with `xcrun stapler validate` and `spctl --assess --type execute --verbose=4`, then ZIP **that exported app** for the release. The packaging configuration names Hari’s team; other maintainers must use their own team and signing identity.
 
 Discovery checks existing neighbors and at most four observed /24 address ranges within the active local IPv4 subnet, with 24 concurrent requests and a 60-second search deadline. Results are selectable immediately; selecting a TV cancels queued probes. Generation IDs discard late results, and rows do not reorder while the user is choosing. Manual entry handles devices outside that search. Only private IPv4 addresses are accepted. The app queries Roku’s read-only device information and the TV’s real unicast mDNS response; it preserves the AirPlay TXT fields and uses `dns-sd -lo -P` for a local-only registration. “Ready” requires successful registration callbacks for both the service and hostname, with an eight-second timeout. It rechecks the selected device identity and announcement every 15 seconds, searches again when the TV disappears, and removes its registration when quit normally. It stores only the selected TV’s ID and last IP in local preferences.
 
