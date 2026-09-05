@@ -121,11 +121,13 @@ func candidates() -> [String] {
 final class App: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate {
     var window: NSWindow!, statusItem: NSStatusItem!, table = NSTableView()
     let status = NSTextField(wrappingLabelWithString: "Join the same Wi-Fi as your TV, then find it below.")
-    let scanButton = NSButton(title: "Find TVs", target: nil, action: nil)
-    let connectButton = NSButton(title: "Show in AirPlay", target: nil, action: nil)
+    let connectButton = NSButton(title: "Use this TV", target: nil, action: nil)
     let spinner = NSProgressIndicator()
     var tvs: [TV] = [], selected: TV?, proxy: Process?, current: Announcement?
     var timer: Timer?, busy = false, refreshing = false
+    var scanning = false, scanID = UUID(), scanQueue: OperationQueue?
+    var lastScan = Date.distantPast
+    var rememberedID: String? { UserDefaults.standard.string(forKey: "tvID") }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -149,64 +151,104 @@ final class App: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTable
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28), stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -28), stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 28)])
         let title = NSTextField(labelWithString: "Your TV. On your Mac."); title.font = .systemFont(ofSize: 26, weight: .bold)
         stack.addArrangedSubview(title)
-        let intro = NSTextField(wrappingLabelWithString: "Find your Roku, make it visible, then choose it in Screen Mirroring."); intro.textColor = .secondaryLabelColor
+        let intro = NSTextField(wrappingLabelWithString: "Choose your TV. We’ll make it available in Screen Mirroring."); intro.textColor = .secondaryLabelColor
         stack.addArrangedSubview(intro)
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("TV")); col.title = "Available TVs"; col.width = 500; table.addTableColumn(col)
         table.headerView = nil; table.rowHeight = 54; table.dataSource = self; table.delegate = self
         let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.borderType = .bezelBorder
         stack.addArrangedSubview(scroll); scroll.heightAnchor.constraint(equalToConstant: 185).isActive = true
         scroll.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        scanButton.target = self; scanButton.action = #selector(scan)
         connectButton.target = self; connectButton.action = #selector(connect); connectButton.bezelStyle = .rounded; connectButton.isEnabled = false
-        let manual = NSButton(title: "Enter TV address…", target: self, action: #selector(manualIP))
+        let manual = NSButton(title: "TV missing?", target: self, action: #selector(manualIP))
         spinner.style = .spinning; spinner.controlSize = .small; spinner.isDisplayedWhenStopped = false
-        let buttons = NSStackView(views: [scanButton, manual, connectButton, spinner]); buttons.spacing = 10
+        let buttons = NSStackView(views: [connectButton, spinner, manual]); buttons.spacing = 12
         stack.addArrangedSubview(buttons)
         status.font = .systemFont(ofSize: 13); status.widthAnchor.constraint(equalToConstant: 524).isActive = true; stack.addArrangedSubview(status)
         let note = NSTextField(wrappingLabelWithString: "Keep AirplayAtTheCrib open while casting. Closing this window leaves it in the menu bar. Quit from its menu when you’re done."); note.font = .systemFont(ofSize: 11); note.textColor = .secondaryLabelColor; stack.addArrangedSubview(note)
         showWindow()
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.refresh() }
+        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.refresh() }
+        DispatchQueue.main.async { self.scan() }
     }
 
     @objc func showWindow() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool { showWindow(); return true }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
-    func applicationWillTerminate(_ notification: Notification) { timer?.invalidate(); proxy?.terminate() }
+    func applicationWillTerminate(_ notification: Notification) { timer?.invalidate(); cancelScan(); proxy?.terminate() }
     func numberOfRows(in tableView: NSTableView) -> Int { tvs.count }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let tv = tvs[row]
         let cell = NSTextField(wrappingLabelWithString: "\(tv.name)\n\(tv.ip)"); cell.font = .systemFont(ofSize: 14); return cell
     }
-    func tableViewSelectionDidChange(_ notification: Notification) { connectButton.isEnabled = table.selectedRow >= 0 && !busy }
-    func setBusy(_ value: Bool) { busy = value; scanButton.isEnabled = !value; connectButton.isEnabled = !value && table.selectedRow >= 0; if value { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) } }
+    func tableViewSelectionDidChange(_ notification: Notification) { updateControls() }
+    func updateControls() {
+        connectButton.isEnabled = table.selectedRow >= 0 && !busy
+        if busy || (scanning && tvs.isEmpty) { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+    }
+    func setBusy(_ value: Bool) { busy = value; updateControls() }
+    func cancelScan() { scanID = UUID(); scanQueue?.cancelAllOperations(); scanQueue = nil; scanning = false; updateControls() }
+    func addTV(_ tv: TV) {
+        // Append without moving rows under a user's pointer during discovery.
+        if let index = tvs.firstIndex(where: { $0.id == tv.id }) { tvs[index] = tv } else { tvs.append(tv) }
+        table.reloadData(); updateControls()
+    }
 
     @objc func scan() {
-        guard !busy else { return }; setBusy(true); tvs = []; table.reloadData()
-        status.stringValue = "Looking for TVs on your Wi-Fi… Allow Local Network access if your Mac asks."
+        guard !busy, !scanning, selected == nil else { return }
+        scanning = true; lastScan = Date(); let token = UUID(); scanID = token
+        let queue = OperationQueue(); queue.maxConcurrentOperationCount = 24; scanQueue = queue
+        updateControls()
+        status.stringValue = tvs.isEmpty ? "Looking for your TV… You can choose it as soon as it appears." : "Choose your TV. We’re checking for others in the background."
+        let rememberedIP = UserDefaults.standard.string(forKey: "tvIP")
         DispatchQueue.global().async {
-            let ips = candidates(), queue = OperationQueue(); queue.maxConcurrentOperationCount = 24
-            for ip in ips { queue.addOperation { if let tv = probe(ip) { DispatchQueue.main.async {
-                if !self.tvs.contains(where: { $0.id == tv.id }) { self.tvs.append(tv); self.tvs.sort { $0.name < $1.name }; self.table.reloadData() }
-            } } } }
+            var seen = Set<String>()
+            let ips = ([rememberedIP].compactMap { $0 } + candidates()).filter { seen.insert($0).inserted }
+            for ip in ips {
+                let operation = BlockOperation()
+                operation.addExecutionBlock { [weak operation] in
+                    guard operation?.isCancelled == false else { return }
+                    if let tv = probe(ip) { DispatchQueue.main.async {
+                        guard self.scanID == token else { return }
+                        self.addTV(tv)
+                        self.status.stringValue = "Choose your TV below. You don’t need to wait for the search to finish."
+                        if tv.id == self.rememberedID {
+                            self.table.selectRowIndexes(IndexSet(integer: self.tvs.firstIndex { $0.id == tv.id }!), byExtendingSelection: false)
+                            self.connect()
+                        }
+                    } }
+                }
+                queue.addOperation(operation)
+            }
             queue.waitUntilAllOperationsAreFinished()
-            DispatchQueue.main.async { self.setBusy(false); self.status.stringValue = self.tvs.isEmpty ? "No TVs found. Check Local Network permission and your Wi-Fi, or choose Enter TV address. On your Roku, find it under Settings → Network → About." : "Choose your TV, then click Show in AirPlay. Other people’s TVs may appear on shared Wi-Fi." }
+            DispatchQueue.main.async {
+                guard self.scanID == token else { return }
+                self.scanning = false; self.scanQueue = nil; self.updateControls()
+                self.status.stringValue = self.tvs.isEmpty ? "No TVs found yet. Make sure your TV is on and on the same Wi-Fi. We’ll try again automatically. Need help? Click TV missing?" : "Choose your TV, then click Use this TV."
+            }
+        }
+        // A hard UI deadline prevents a slow or unexpectedly large LAN from
+        // leaving the app in a permanent search state. In-flight probes finish
+        // within their own two-second timeout; stale results are ignored.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+            guard self.scanID == token, self.scanning else { return }
+            self.cancelScan()
+            self.status.stringValue = self.tvs.isEmpty ? "No TVs found yet. Check your Wi-Fi or click TV missing? We’ll keep checking automatically." : "Choose your TV, then click Use this TV."
         }
     }
 
     @objc func manualIP() {
         guard !busy else { return }
-        let alert = NSAlert(); alert.messageText = "Enter your Roku’s IP address"; alert.informativeText = "On your TV: Settings → Network → About. Look for IP address."
+        let alert = NSAlert(); alert.messageText = "Can’t see your TV?"; alert.informativeText = "First, turn on your TV and join its Wi-Fi. If your Mac asked for Local Network access, choose Allow.\n\nYou can also enter the TV’s IP address below. Find it on the Roku under Settings → Network → About."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 290, height: 24)); field.placeholderString = "For example, 192.168.1.25"; alert.accessoryView = field
         alert.addButton(withTitle: "Find TV"); alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { response in
             guard response == .alertFirstButtonReturn else { return }
             let ip = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard privateIP(ip) else { self.status.stringValue = "Enter a local IP address using four numbers separated by dots."; return }
-            self.setBusy(true); self.status.stringValue = "Checking your TV…"
+            self.cancelScan(); self.setBusy(true); self.status.stringValue = "Checking your TV…"
             DispatchQueue.global().async {
                 let tv = probe(ip)
                 DispatchQueue.main.async { self.setBusy(false); if let tv {
-                    self.tvs.removeAll { $0.id == tv.id }; self.tvs.append(tv); self.table.reloadData(); self.table.selectRowIndexes(IndexSet(integer: self.tvs.count - 1), byExtendingSelection: false); self.status.stringValue = "Found \(tv.name). Click Show in AirPlay."
+                    self.addTV(tv); self.table.selectRowIndexes(IndexSet(integer: self.tvs.firstIndex { $0.id == tv.id }!), byExtendingSelection: false); self.connect()
                 } else { self.status.stringValue = "Couldn’t reach an AirPlay-capable Roku there. Check the address, Wi-Fi, and Local Network permission." } }
             }
         }
@@ -214,7 +256,7 @@ final class App: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTable
 
     @objc func connect() {
         let row = table.selectedRow; guard !busy, tvs.indices.contains(row) else { return }
-        let tv = tvs[row]; setBusy(true); status.stringValue = "Reading your TV’s AirPlay settings…"
+        let tv = tvs[row]; cancelScan(); setBusy(true); status.stringValue = "Getting \(tv.name) ready…"
         DispatchQueue.global().async {
             let verified = probe(tv.ip), record = announcement(tv.ip)
             DispatchQueue.main.async {
@@ -229,23 +271,53 @@ final class App: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTable
         proxy?.terminationHandler = nil; proxy?.terminate()
         let task = Process(); task.executableURL = URL(fileURLWithPath: "/usr/bin/dns-sd")
         task.arguments = ["-lo", "-P", record.name, "_airplay._tcp", "local.", record.port, record.host, tv.ip] + record.txt
-        task.standardOutput = FileHandle.nullDevice; task.standardError = FileHandle.nullDevice
-        task.terminationHandler = { [weak self] p in DispatchQueue.main.async { guard let self, self.proxy === p else { return }; self.proxy = nil; self.current = nil; self.status.stringValue = "Discovery stopped. Click Show in AirPlay to try again." } }
+        let output = Pipe(); task.standardOutput = output; task.standardError = output
+        task.terminationHandler = { [weak self] p in DispatchQueue.main.async { guard let self, self.proxy === p else { return }; self.proxy = nil; self.current = nil; self.setBusy(false); self.status.stringValue = "Discovery stopped. Click Use this TV to try again." } }
         do {
-            try task.run(); proxy = task; selected = tv; current = record
-            status.stringValue = "Ready: \(tv.name)\nOpen Control Center → Screen Mirroring and choose this TV. Enter the code shown on the TV if asked."
-        } catch { proxy = nil; selected = nil; current = nil; status.stringValue = "Couldn’t start discovery. Quit and reopen AirplayAtTheCrib, then try again." }
+            try task.run(); proxy = task; selected = tv; current = nil; setBusy(true)
+            status.stringValue = "Making your TV available in Screen Mirroring…"
+            DispatchQueue.global().async {
+                var text = "", announced = false
+                while true {
+                    let data = output.fileHandleForReading.availableData
+                    if data.isEmpty { break }
+                    if announced { continue }
+                    text += String(decoding: data, as: UTF8.self)
+                    if text.components(separatedBy: "Name now registered and active").count >= 3 {
+                        announced = true
+                        DispatchQueue.main.async {
+                            guard self.proxy === task, task.isRunning else { return }
+                            self.current = record; self.setBusy(false)
+                            UserDefaults.standard.set(tv.id, forKey: "tvID"); UserDefaults.standard.set(tv.ip, forKey: "tvIP")
+                            self.status.stringValue = "Ready: \(tv.name)\nOpen Control Center → Screen Mirroring and choose this TV. Enter the code shown on the TV if asked."
+                        }
+                    }
+                    if text.count > 16384 { text = String(text.suffix(8192)) }
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                guard self.proxy === task, self.current == nil else { return }
+                self.disconnect(forget: false)
+                self.status.stringValue = "Your Mac couldn’t make the TV available. Check Local Network permission, then click Use this TV to retry."
+            }
+        } catch { proxy = nil; selected = nil; current = nil; setBusy(false); status.stringValue = "Couldn’t start discovery. Quit and reopen AirplayAtTheCrib, then try again." }
     }
 
-    @objc func stopProxy() { proxy?.terminationHandler = nil; proxy?.terminate(); proxy = nil; selected = nil; current = nil; status.stringValue = "Stopped. Select a TV to make it available again." }
+    @objc func stopProxy() { disconnect(forget: true); status.stringValue = "Stopped. Select a TV to make it available again." }
+    func disconnect(forget: Bool) {
+        proxy?.terminationHandler = nil; proxy?.terminate(); proxy = nil; selected = nil; current = nil; setBusy(false)
+        if forget { UserDefaults.standard.removeObject(forKey: "tvID"); UserDefaults.standard.removeObject(forKey: "tvIP") }
+    }
     func refresh() {
-        guard !busy, !refreshing, let tv = selected else { return }; refreshing = true
+        guard !busy, !refreshing else { return }
+        guard let tv = selected else { if !scanning && Date().timeIntervalSince(lastScan) >= 75 { scan() }; return }
+        refreshing = true
         DispatchQueue.global().async {
             let verified = probe(tv.ip), record = announcement(tv.ip)
             DispatchQueue.main.async {
                 self.refreshing = false
                 guard self.selected?.id == tv.id, self.selected?.ip == tv.ip else { return }
-                guard verified?.id == tv.id, let record else { self.stopProxy(); self.status.stringValue = "Your TV is no longer reachable. Wake it or rejoin its Wi-Fi, then click Find TVs."; return }
+                guard verified?.id == tv.id, let record else { self.disconnect(forget: false); self.tvs.removeAll { $0.id == tv.id }; self.table.reloadData(); self.scan(); return }
                 if record != self.current || self.proxy?.isRunning != true { self.publish(tv, record) }
             }
         }
