@@ -14,7 +14,7 @@ buildGoModule {
       ./cmd
     ];
   };
-  vendorHash = "sha256-pj8HUvTWE6YmCxNtXmscCl1+O7G14D5kR+JPuPgdkvk=";
+  vendorHash = "sha256-4+38ZzlGJzMitsLav6rVnU8cNO5U5aXMjZiboaeGr20=";
   subPackages = [ "cmd/airplay-beacon" ];
   env.CGO_ENABLED = 0;
   nativeCheckInputs = [ dbus ];
