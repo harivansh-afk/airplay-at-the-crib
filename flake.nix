@@ -1,6 +1,6 @@
 {
   description = "AirPlay discovery for an existing Roku using a Linux Bluetooth beacon";
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/3e41b24abd260e8f71dbe2f5737d24122f972158";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/f20cd90e28fe0403873f473b29e42662cd86e8c4";
   outputs =
     { self, nixpkgs }:
     let
